@@ -1,0 +1,26 @@
+{
+    "faction": "NSPX",
+    "contact": "you should know",
+    "templates": [
+        {
+            "name": "NEVER, ts",
+            "sources": [
+                "https://files.catbox.moe/jurppd.png"
+            ],
+            "x": 0,
+            "y": 805
+        },
+            {
+      "name": "Atori just stands here",
+      "sources": [
+        "https://files.catbox.moe/1u76de.png"
+      ],
+      "x": 0,
+      "y": 739
+    }
+    ],
+    "whitelist": [
+    ],
+    "blacklist": [
+    ]
+}
