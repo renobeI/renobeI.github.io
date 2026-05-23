@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name NSPX Overlay
-// @version 1.0.4
+// @version 1.0.0
 // @description A set of tools for Blurple Canvas' website, including a live overlay.
 // @icon https://renobei.github.io/prayge.png
 // @grant GM_setValue
@@ -20,8 +20,8 @@
 // @tag games
 // @tag canvas
 // @noframes
-// @updateURL
-// @downloadURL
+// @updateURL https://renobei.github.io/overlay.js
+// @downloadURL https://renobei.github.io/overlay.user.js
 // @supportURL
 // ==/UserScript==
 // this is taken from volcanofr, i edited it to fit our needs
