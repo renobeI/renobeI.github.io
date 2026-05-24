@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name NSPX Overlay
-// @version 1.0.0
+// @version 1.0.1
 // @description A set of tools for Blurple Canvas' website, including a live overlay.
 // @icon https://renobei.github.io/prayge.png
 // @grant GM_setValue
@@ -64,6 +64,9 @@ let dataCanvas = null;
 
 /** @type {ImageData | null} */
 let overlayCanvas = null;
+let overlayWatcherStarted = false;
+let coordinatesWatcherStarted = false;
+let overlaySetupRunning = false;
 
 const originalSend = XMLHttpRequest.prototype.send;
 /**
@@ -142,6 +145,8 @@ XMLHttpRequest.prototype.send = function (body) {
 }
 
 function setupCoordinates() {
+    if (coordinatesWatcherStarted) return;
+    coordinatesWatcherStarted = true;
     let lastCoordinates = { x: 0, y: 0 };
 
     const observer = new MutationObserver(() => {
@@ -272,103 +277,129 @@ function updateCoordinatesSelector(x, y) {
  * @returns {HTMLImageElement | null}
  */
 async function setupOverlay(url, opacity) {
-    /** @type {HTMLImageElement | null} */
-    const canvasImg = document.querySelector("#canvas-image-wrapper > img");
+    if (overlaySetupRunning) return document.getElementById("bhw-overlay");
+    overlaySetupRunning = true;
 
-    if (canvasImg === null) {
-        console.warn("[Hub Watcher]", "Canvas image not found.");
-        return null;
-    }
+    try {
+        /** @type {HTMLImageElement | null} */
+        const canvasImg = document.querySelector("#canvas-image-wrapper > img");
 
-    /** @type {HTMLImageElement | null} */
-    let overlay = document.getElementById("bhw-overlay");
-    if (overlay !== null && overlay.tagName !== "IMG") {
-        console.warn("[Hub Watcher]", "Element with id 'bhw-overlay' already exists but is not an img. Recreating it.");
-        overlay.remove();
-        overlay = null;
-    }
-
-    if (url === undefined) url = GM_getValue("bhw-overlay-url", `${DATA_DOMAIN}/template.png`);
-    if (opacity === undefined) opacity = GM_getValue("bhw-overlay-opacity", 0.5);
-    opacity = Math.min(1, Math.max(0, opacity));
-
-    if (overlay === null) {
-        const blobUrl = await getBlobFromURL(`${url}?t=${Math.ceil(Date.now() / 1000)}`);
-
-        if (blobUrl === null) {
-            console.warn("[Hub Watcher]", "Failed to define overlay image.");
+        if (canvasImg === null) {
+            console.warn("[Hub Watcher]", "Canvas image not found.");
             return null;
         }
 
-        overlay = document.createElement("img");
-        overlay.id = "bhw-overlay";
-        overlay.crossOrigin = "anonymous";
-        overlay.src = blobUrl;
-        overlay.style.cssText = `
-        position: absolute;
-        transform: ${canvasImg.style.transform || "none"};
-        top: 0;
-        left: 0;
-        width: ${canvasImg.style.width || "900px"};
-        height: ${canvasImg.style.height || "900px"};
-        max-width: unset;
-        max-height: unset;
-        pointer-events: none;
-        user-select: none;
-        -webkit-user-select: none;
-        -webkit-user-drag: none;
-        opacity: ${opacity.toFixed(2)};
-        image-rendering: pixelated;
-        `;
+        /** @type {HTMLImageElement | null} */
+        let overlay = document.getElementById("bhw-overlay");
+        if (overlay !== null && overlay.tagName !== "IMG") {
+            console.warn("[Hub Watcher]", "Element with id 'bhw-overlay' already exists but is not an img. Recreating it.");
+            overlay.remove();
+            overlay = null;
+        }
 
-        canvasImg.parentElement.appendChild(overlay);
+        if (url === undefined) url = GM_getValue("bhw-overlay-url", `${DATA_DOMAIN}/template.png`);
+        if (opacity === undefined) opacity = GM_getValue("bhw-overlay-opacity", 0.5);
+        opacity = Math.min(1, Math.max(0, opacity));
 
-        await setupOverlayCanvas(overlay);
-    } else {
-        if (!overlay.src.startsWith(url)) {
+        if (overlay === null) {
             const blobUrl = await getBlobFromURL(`${url}?t=${Math.ceil(Date.now() / 1000)}`);
 
             if (blobUrl === null) {
-                console.warn("[Hub Watcher]", "Failed to update overlay image.");
+                console.warn("[Hub Watcher]", "Failed to define overlay image.");
                 return null;
             }
 
+            overlay = document.createElement("img");
+            overlay.id = "bhw-overlay";
+            overlay.crossOrigin = "anonymous";
             overlay.src = blobUrl;
+            overlay.style.cssText = `
+            position: absolute;
+            transform: ${canvasImg.style.transform || "none"};
+            top: 0;
+            left: 0;
+            width: ${canvasImg.style.width || "900px"};
+            height: ${canvasImg.style.height || "900px"};
+            max-width: unset;
+            max-height: unset;
+            pointer-events: none;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-user-drag: none;
+            opacity: ${opacity.toFixed(2)};
+            `;
+
+            canvasImg.parentElement.appendChild(overlay);
 
             await setupOverlayCanvas(overlay);
+        } else {
+            if (!overlay.src.startsWith(url)) {
+                const blobUrl = await getBlobFromURL(`${url}?t=${Math.ceil(Date.now() / 1000)}`);
+
+                if (blobUrl === null) {
+                    console.warn("[Hub Watcher]", "Failed to update overlay image.");
+                    return null;
+                }
+
+                overlay.src = blobUrl;
+
+                await setupOverlayCanvas(overlay);
+            }
+
+            if (overlay.style.opacity !== opacity.toFixed(2)) overlay.style.opacity = opacity.toFixed(2);
         }
 
-        if (overlay.style.opacity !== opacity.toFixed(2)) overlay.style.opacity = opacity.toFixed(2);
+        GM_setValue("bhw-overlay-url", url);
+        GM_setValue("bhw-overlay-opacity", opacity);
+
+        return overlay;
     }
-
-    GM_setValue("bhw-overlay-url", url.href);
-    GM_setValue("bhw-overlay-opacity", opacity);
-
-    return overlay;
+    finally {
+        overlaySetupRunning = false;
+    }
 }
+function watchOverlay() {
+    if (overlayWatcherStarted) return;
+    overlayWatcherStarted = true;
 
+    const observer = new MutationObserver(() => {
+        const canvasImg = document.querySelector("#canvas-image-wrapper > img");
+        const overlay = document.getElementById("bhw-overlay");
+
+        if (canvasImg && !overlay) {
+            console.warn("[Hub Watcher]", "Overlay disappeared; restoring.");
+            setupOverlay();
+        }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+}
 /**
  * @private
  * @param {string} url
  * @returns {Promise<string | null>}
  */
-function getBlobFromURL(url) {
-    return new Promise((resolve, reject) => {
+async function getBlobFromURL(url) {
+    const response = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
-            method: "GET",
             url,
+            method: "GET",
             responseType: "blob",
-            onload: (response) => {
-                if (response.status < 200 || response.status >= 300) {
-                    reject(new Error(`HTTP ${response.status}`));
-                    return;
-                }
-
-                resolve(URL.createObjectURL(response.response));
-            },
+            onload: resolve,
             onerror: reject,
         });
     });
+    if (response.status !== 200) {
+        console.error("[Hub Watcher]", `Failed to fetch ${url}:`, response);
+
+        if (url !== `${DATA_DOMAIN}/template.png`) {
+            setupOverlay(`${DATA_DOMAIN}/template.png`);
+        }
+
+        return null;
+    }
+
+    return URL.createObjectURL(response.response);
 }
 
 /**
@@ -435,32 +466,17 @@ function getOverlayPixelColor(x, y) {
     const index = (y * overlayCanvas.width + x) * 4;
     const [r, g, b, a] = overlayCanvas.data.slice(index, index + 4);
 
-    if (a === 0) return null;
+    let color = null;
+    if (a === 255) {
+        color = dataPalette.find(color =>
+        color.rgba[0] === r &&
+        color.rgba[1] === g &&
+        color.rgba[2] === b &&
+        (color.rgba[3] || 255) === a
+        ) || null;
+    } else if (a > 0) color = dataPalette.find(color => color.code === "blank") || null;
 
-    if (a < 255) {
-        return dataPalette.find(color => color.code === "blank") || null;
-    }
-
-    let bestColor = null;
-    let bestDistance = Infinity;
-
-    for (const color of dataPalette) {
-        const cr = color.rgba[0];
-        const cg = color.rgba[1];
-        const cb = color.rgba[2];
-
-        const distance =
-        (r - cr) ** 2 +
-        (g - cg) ** 2 +
-        (b - cb) ** 2;
-
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            bestColor = color;
-        }
-    }
-
-    return bestColor;
+    return color;
 }
 
 /**
@@ -468,14 +484,11 @@ function getOverlayPixelColor(x, y) {
  * @return {void}
  */
 async function updateOverlay() {
-    const overlay = await setupOverlay();
+    const overlay = document.getElementById("bhw-overlay");
+    if (overlay) overlay.remove();
 
-    if (overlay === null) {
-        console.warn("[Hub Watcher]", "Overlay image not found, cannot update.");
-        return;
-    }
-
-    overlay.src = `${overlay.src.split("?")[0]}?t=${Math.ceil(Date.now() / 1000)}`;
+    overlayCanvas = null;
+    await setupOverlay();
 }
 
 /**
@@ -890,6 +903,7 @@ async function makeSetups() {
     await setupOverlay();
     await setupPanel();
     setupCoordinates();
+    watchOverlay();
 
     setTimeout(async () => {
         if (dataCanvas === null) {
