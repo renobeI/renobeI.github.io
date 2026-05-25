@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name NSPX Overlay
-// @version 1.0.1
+// @version 2.2.1
 // @description A set of tools for Blurple Canvas' website, including a live overlay.
 // @icon https://renobei.github.io/prayge.png
 // @grant GM_setValue
@@ -64,11 +64,14 @@ let dataCanvas = null;
 
 /** @type {ImageData | null} */
 let overlayCanvas = null;
-let overlayWatcherStarted = false;
-let coordinatesWatcherStarted = false;
-let overlaySetupRunning = false;
 
+/** @type {{ element: Element, type: string, listener: function }[]} */
+const eventListeners = [];
+/** @type {MutationObserver[]} */
+const observers = [];
+const STORAGE_PREFIX = "nspx-overlay";
 const originalSend = XMLHttpRequest.prototype.send;
+let overlayWatcherStarted = false;
 /**
  * @param {Document | Blob | ArrayBuffer | TypedArray | DataView | FormData | URLSearchParams | string | null} [body]
  * @returns {void}
@@ -101,52 +104,12 @@ XMLHttpRequest.prototype.send = function (body) {
                 console.error("[Hub Watcher]", "Error parsing palette data:", error);
             }
         }
-
-        // old current selected pixel detection
-        // if (
-        // 	this.status === 200 &&
-        // 	this.responseURL.startsWith(`${API_DOMAIN}/canvas/${dataCanvas?.id || "2026"}/pixel/history`)
-        // ) {
-        // 	const params = Object.fromEntries(new URL(this.responseURL).searchParams.entries());
-        // 	const [x, y] = [params.x, params.y].map(Number);
-
-        // 	if (!Number.isFinite(x) || !Number.isFinite(y)) {
-        // 		console.warn("[Hub Watcher]", "Invalid pixel history coordinates:", { x, y });
-        // 		return;
-        // 	}
-
-        // 	const color = getOverlayPixelColor(x, y);
-
-        // 	console.debug("[Hub Watcher]", `Overlay color at (${x}, ${y}):`, color);
-
-        // 	if (color === null) return;
-
-        // 	try {
-        // 		/** @type {PaletteColor | null} */
-        // 		const lastPixelColor = JSON.parse(this.response).pixelHistory?.[0]?.color || null;
-
-        // 		if (lastPixelColor?.code === color.code) return;
-
-        // 		/** @type {HTMLButtonElement | null} */
-        // 		const colorButton = color.rgba.length >= 4 && color.rgba[3] < 255
-        // 			? document.querySelector(`button[style*="background-color: rgba(${color.rgba.slice(0, 3).join(", ")}, ${(color.rgba[3] / 255).toFixed(3)});"]`)
-        // 			: document.querySelector(`button[style*="background-color: rgb(${color.rgba.slice(0, 3).join(", ")});"]`);
-
-        // 		if (colorButton === null) return;
-
-        // 		colorButton.click();
-        // 	} catch (error) {
-        // 		console.error("[Hub Watcher]", "Error handling pixel history response:", error);
-        // 	}
-        // }
     });
 
     originalSend.call(this, body);
 }
 
 function setupCoordinates() {
-    if (coordinatesWatcherStarted) return;
-    coordinatesWatcherStarted = true;
     let lastCoordinates = { x: 0, y: 0 };
 
     const observer = new MutationObserver(() => {
@@ -172,6 +135,8 @@ function setupCoordinates() {
         attributeFilter: ["aria-selected"],
     });
 
+    observers.push(observer);
+
     console.debug("[Hub Watcher]", "Coordinates selector setup complete.");
 }
 
@@ -193,7 +158,7 @@ function getCoordinatesXY() {
     }
 
     if (div === null) {
-        console.debug("[Hub Watcher]", "Coordinates container not found.");
+        // console.debug("[Hub Watcher]", "Coordinates container not found.");
         return null;
     }
 
@@ -277,86 +242,87 @@ function updateCoordinatesSelector(x, y) {
  * @returns {HTMLImageElement | null}
  */
 async function setupOverlay(url, opacity) {
-    if (overlaySetupRunning) return document.getElementById("bhw-overlay");
-    overlaySetupRunning = true;
+    /** @type {HTMLDivElement | null} */
+    const canvasWrapper = document.querySelector("div#canvas-pan-and-zoom");
 
-    try {
-        /** @type {HTMLImageElement | null} */
-        const canvasImg = document.querySelector("#canvas-image-wrapper > img");
+    if (canvasWrapper === null) {
+        console.warn("[Hub Watcher]", "Canvas wrapper not found.");
+        return null;
+    }
 
-        if (canvasImg === null) {
-            console.warn("[Hub Watcher]", "Canvas image not found.");
+    /** @type {HTMLImageElement | null} */
+    const canvasImg = document.querySelector("img[alt=\"Active Blurple Canvas\"]");
+
+    if (canvasImg === null) {
+        console.warn("[Hub Watcher]", "Canvas image not found.");
+        return null;
+    }
+
+    /** @type {HTMLImageElement | null} */
+    let overlay = document.getElementById("bhw-overlay");
+    if (overlay !== null && overlay.tagName !== "IMG") {
+        console.warn("[Hub Watcher]", "Element with id 'bhw-overlay' already exists but is not an img. Recreating it.");
+        overlay.remove();
+        overlay = null;
+    }
+
+    if (url === undefined) url = GM_getValue("${STORAGE_PREFIX}", `${DATA_DOMAIN}/template.png`);
+    if (opacity === undefined) opacity = GM_getValue("bhw-overlay-opacity", 0.5);
+    opacity = Math.min(1, Math.max(0, opacity));
+
+    if (overlay === null) {
+        const blobUrl = await getBlobFromURL(`${url}?t=${Math.ceil(Date.now() / 1000)}`);
+
+        if (blobUrl === null) {
+            console.warn("[Hub Watcher]", "Failed to define overlay image.");
             return null;
         }
 
-        /** @type {HTMLImageElement | null} */
-        let overlay = document.getElementById("bhw-overlay");
-        if (overlay !== null && overlay.tagName !== "IMG") {
-            console.warn("[Hub Watcher]", "Element with id 'bhw-overlay' already exists but is not an img. Recreating it.");
-            overlay.remove();
-            overlay = null;
-        }
+        overlay = document.createElement("img");
+        overlay.id = "bhw-overlay";
+        overlay.crossOrigin = "anonymous";
+        overlay.src = blobUrl;
+        overlay.style.cssText = `
+        position: absolute;
+        transform: ${canvasImg.style.transform || "none"};
+        top: 0;
+        left: 0;
+        width: ${canvasImg.style.width || "900px"};
+        height: ${canvasImg.style.height || "900px"};
+        max-width: unset;
+        max-height: unset;
+        image-rendering: pixelated;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-user-drag: none;
+        opacity: ${opacity.toFixed(2)};
+        `;
 
-        if (url === undefined) url = GM_getValue("bhw-overlay-url", `${DATA_DOMAIN}/template.png`);
-        if (opacity === undefined) opacity = GM_getValue("bhw-overlay-opacity", 0.5);
-        opacity = Math.min(1, Math.max(0, opacity));
+        canvasWrapper.appendChild(overlay);
 
-        if (overlay === null) {
+        await setupOverlayCanvas(overlay);
+    } else {
+        if (!overlay.src.startsWith(url)) {
             const blobUrl = await getBlobFromURL(`${url}?t=${Math.ceil(Date.now() / 1000)}`);
 
             if (blobUrl === null) {
-                console.warn("[Hub Watcher]", "Failed to define overlay image.");
+                console.warn("[Hub Watcher]", "Failed to update overlay image.");
                 return null;
             }
 
-            overlay = document.createElement("img");
-            overlay.id = "bhw-overlay";
-            overlay.crossOrigin = "anonymous";
             overlay.src = blobUrl;
-            overlay.style.cssText = `
-            position: absolute;
-            transform: ${canvasImg.style.transform || "none"};
-            top: 0;
-            left: 0;
-            width: ${canvasImg.style.width || "900px"};
-            height: ${canvasImg.style.height || "900px"};
-            max-width: unset;
-            max-height: unset;
-            pointer-events: none;
-            user-select: none;
-            -webkit-user-select: none;
-            -webkit-user-drag: none;
-            opacity: ${opacity.toFixed(2)};
-            `;
-
-            canvasImg.parentElement.appendChild(overlay);
 
             await setupOverlayCanvas(overlay);
-        } else {
-            if (!overlay.src.startsWith(url)) {
-                const blobUrl = await getBlobFromURL(`${url}?t=${Math.ceil(Date.now() / 1000)}`);
-
-                if (blobUrl === null) {
-                    console.warn("[Hub Watcher]", "Failed to update overlay image.");
-                    return null;
-                }
-
-                overlay.src = blobUrl;
-
-                await setupOverlayCanvas(overlay);
-            }
-
-            if (overlay.style.opacity !== opacity.toFixed(2)) overlay.style.opacity = opacity.toFixed(2);
         }
 
-        GM_setValue("bhw-overlay-url", url);
-        GM_setValue("bhw-overlay-opacity", opacity);
+        if (overlay.style.opacity !== opacity.toFixed(2)) overlay.style.opacity = opacity.toFixed(2);
+    }
 
-        return overlay;
-    }
-    finally {
-        overlaySetupRunning = false;
-    }
+    GM_setValue("${STORAGE_PREFIX}", url);
+    GM_setValue("bhw-overlay-opacity", opacity);
+
+    return overlay;
 }
 function watchOverlay() {
     if (overlayWatcherStarted) return;
@@ -380,6 +346,8 @@ function watchOverlay() {
  * @returns {Promise<string | null>}
  */
 async function getBlobFromURL(url) {
+    console.warn("[Hub Watcher]", "Downloading following URL:", url);
+
     const response = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
             url,
@@ -387,15 +355,16 @@ async function getBlobFromURL(url) {
             responseType: "blob",
             onload: resolve,
             onerror: reject,
+            ontimeout: reject,
         });
+    }).catch((error) => {
+        console.error("[Hub Watcher]", `Error fetching ${url}:`, error);
     });
-    if (response.status !== 200) {
+
+    if (!response) return null;
+
+    if (response.status < 200 || response.status >= 300) {
         console.error("[Hub Watcher]", `Failed to fetch ${url}:`, response);
-
-        if (url !== `${DATA_DOMAIN}/template.png`) {
-            setupOverlay(`${DATA_DOMAIN}/template.png`);
-        }
-
         return null;
     }
 
@@ -409,7 +378,20 @@ async function getBlobFromURL(url) {
  */
 async function setupOverlayCanvas(overlay) {
     console.debug("[Hub Watcher]", "Caching overlay image...");
-    if (overlay.complete !== true) await new Promise((resolve) => (overlay.onload = resolve));
+    if (overlay.complete !== true) await new Promise((resolve, reject) => {
+        const timeout = setTimeout(reject, 5_000);
+
+        overlay.onload = () => {
+            clearTimeout(timeout);
+            resolve();
+        };
+
+        overlay.onerror = (error) => {
+            clearTimeout(timeout);
+            console.error("[Hub Watcher]", "Error loading overlay image:", error);
+            reject();
+        };
+    });
 
     const canvas = document.createElement("canvas");
     canvas.width = overlay.naturalWidth;
@@ -484,11 +466,14 @@ function getOverlayPixelColor(x, y) {
  * @return {void}
  */
 async function updateOverlay() {
-    const overlay = document.getElementById("bhw-overlay");
-    if (overlay) overlay.remove();
+    const overlay = await setupOverlay();
 
-    overlayCanvas = null;
-    await setupOverlay();
+    if (overlay === null) {
+        console.warn("[Hub Watcher]", "Overlay image not found, cannot update.");
+        return;
+    }
+
+    overlay.src = `${overlay.src.split("?")[0]}?t=${Math.ceil(Date.now() / 1000)}`;
 }
 
 /**
@@ -496,7 +481,15 @@ async function updateOverlay() {
  * @returns {Promise<HTMLDivElement>}
  */
 async function setupPanel() {
-    if (document.readyState === "loading") await new Promise((resolve) => document.addEventListener("DOMContentLoaded", resolve));
+    if (document.readyState === "loading") await new Promise((resolve) => {
+        const listener = () => {
+            resolve();
+            document.removeEventListener("DOMContentLoaded", listener);
+        };
+
+        eventListeners.push({ element: document, type: "DOMContentLoaded", listener });
+        document.addEventListener("DOMContentLoaded", resolve);
+    });
 
     /** @type {HTMLDivElement | null} */
     let panel = document.getElementById("bhw-panel");
@@ -551,16 +544,6 @@ function makeDraggable(element) {
     let offsetY = 0;
     let defaultCursor = "";
 
-    let xSize = element.offsetWidth
-    + parseFloat(element.style.marginLeft || "0") + parseFloat(element.style.marginRight || "0")
-    - (parseFloat(element.style.paddingLeft || "0") + parseFloat(element.style.paddingRight || "0"))
-    + parseFloat(element.style.borderLeftWidth || "0") + parseFloat(element.style.borderRightWidth || "0");
-
-    let ySize = element.offsetHeight
-    + parseFloat(element.style.marginTop || "0") + parseFloat(element.style.marginBottom || "0")
-    - (parseFloat(element.style.paddingTop || "0") + parseFloat(element.style.paddingBottom || "0"))
-    + parseFloat(element.style.borderTopWidth || "0") + parseFloat(element.style.borderBottomWidth || "0");
-
     const moveBar = document.createElement("div");
     moveBar.style.cssText = `
     height: 10px;
@@ -601,8 +584,15 @@ function makeDraggable(element) {
     function drag(event) {
         if (!isDragging) return;
 
-        element.style.left = `${Math.max(0, Math.min(event.clientX - offsetX, window.innerWidth - xSize))}px`;
-        element.style.top = `${Math.max(0, Math.min(event.clientY - offsetY, window.innerHeight - ySize))}px`;
+        element.style.left = `${Math.max(0, Math.min(
+            event.clientX - offsetX,
+            window.innerWidth - getSize(element).width
+        ))}px`;
+
+        element.style.top = `${Math.max(0, Math.min(
+            event.clientY - offsetY,
+            window.innerHeight - getSize(element).height
+        ))}px`;
     }
 
     /**
@@ -614,35 +604,45 @@ function makeDraggable(element) {
         element.style.cursor = defaultCursor;
     }
 
-    moveBar.addEventListener("pointerdown", startDragging);
-    window.addEventListener("pointermove", drag);
-    window.addEventListener("pointerup", stopDragging);
-    window.addEventListener("pointercancel", stopDragging);
-
-    window.addEventListener("resize", () => {
-        xSize = element.offsetWidth
-        + parseFloat(element.style.marginLeft || "0") + parseFloat(element.style.marginRight || "0")
-        - (parseFloat(element.style.paddingLeft || "0") + parseFloat(element.style.paddingRight || "0"))
-        + parseFloat(element.style.borderLeftWidth || "0") + parseFloat(element.style.borderRightWidth || "0");
-
-        ySize = element.offsetHeight
-        + parseFloat(element.style.marginTop || "0") + parseFloat(element.style.marginBottom || "0")
-        - (parseFloat(element.style.paddingTop || "0") + parseFloat(element.style.paddingBottom || "0"))
-        + parseFloat(element.style.borderTopWidth || "0") + parseFloat(element.style.borderBottomWidth || "0");
-
+    function resize() {
         element.style.left = `${Math.max(0, Math.min(
             parseFloat(element.style.left) || 0,
-                                                     window.innerWidth - xSize
+                                                     window.innerWidth - getSize(element).width
         ))}px`;
 
-        element.style.top = `${Math.max(
-            0,
-            Math.min(
-                parseFloat(element.style.top) || 0,
-                     window.innerHeight - ySize
-            )
-        )}px`;
-    });
+        element.style.top = `${Math.max(0, Math.min(
+            parseFloat(element.style.top) || 0,
+                                                    window.innerHeight - getSize(element).height
+        ))}px`;
+    }
+
+    eventListeners.push({ element: moveBar, type: "pointerdown", listener: startDragging });
+    moveBar.addEventListener("pointerdown", startDragging);
+    eventListeners.push({ element: window, type: "pointermove", listener: drag });
+    window.addEventListener("pointermove", drag);
+    eventListeners.push({ element: window, type: "pointerup", listener: stopDragging });
+    window.addEventListener("pointerup", stopDragging);
+    eventListeners.push({ element: window, type: "pointercancel", listener: stopDragging });
+    window.addEventListener("pointercancel", stopDragging);
+    eventListeners.push({ element: window, type: "resize", listener: resize });
+    window.addEventListener("resize", resize);
+}
+
+/**
+ * @param {HTMLElement} element
+ * @returns {{width: number, height: number}}
+ */
+function getSize(element) {
+    const rect = element.getBoundingClientRect();
+
+    return {
+        width: rect.width
+        + parseFloat(getComputedStyle(element).marginLeft)
+        + parseFloat(getComputedStyle(element).marginRight),
+        height: rect.height
+        + parseFloat(getComputedStyle(element).marginTop)
+        + parseFloat(getComputedStyle(element).marginBottom)
+    }
 }
 
 /**
@@ -668,7 +668,7 @@ function setupPanelUrl(children) {
         children.appendChild(panelUrlLabel);
     }
 
-    const url = GM_getValue("bhw-overlay-url", `${DATA_DOMAIN}/template.png`);
+    const url = GM_getValue("${STORAGE_PREFIX}", `${DATA_DOMAIN}/template.png`);
 
     /** @type {HTMLSelectElement | null} */
     let panelUrl = document.getElementById("bhw-panel--url");
@@ -690,16 +690,9 @@ function setupPanelUrl(children) {
 
         panelUrl.options.add(new Option("NSPX", `${DATA_DOMAIN}/template.png`));
         panelUrl.options.add(new Option("Bozo Painters", `${DATA_DOMAIN}/bozo.png`));
-        /**
-         *	panelUrl.options.add(new Option("r/PokemonUnite", `${DATA_DOMAIN}/overlay/pokemon.png`));
-         *	panelUrl.options.add(new Option("#FrenchCanvas", `${DATA_DOMAIN}/overlay/fr.png`));
-         *	panelUrl.options.add(new Option("FishWiki", `${DATA_DOMAIN}/overlay/fish.png`));
-         *	panelUrl.options.add(new Option("ManePxls", `${DATA_DOMAIN}/overlay/mane.png`));
-         *	panelUrl.options.add(new Option("./breakthecode_", `${DATA_DOMAIN}/overlay/code.png`));
-         */
         panelUrl.options.add(new Option("Custom", "custom", true, true));
 
-        for (let i = 0; i < panelUrl.options.length; i += 1) if (panelUrl.options[i].value === url) panelUrl.selectedIndex = i;
+        for (let i = 0; i < panelUrl.options.length; i += 1) if (url.endsWith(panelUrl.options[i].value.replace(DATA_DOMAIN, ""))) panelUrl.selectedIndex = i;
 
         if (panelUrl.selectedIndex !== panelUrl.options.length - 1) {
             panelUrl.options[panelUrl.options.length - 1].setAttribute("disabled", "");
@@ -846,10 +839,11 @@ function setupPanelButtonReset(children) {
         text-overflow: ellipsis;
         `;
 
-        panelButtonReset.onclick = () => {
+        panelButtonReset.onclick = async () => {
             for (const key of GM_listValues()) if (key.startsWith("bhw-")) GM_deleteValue(key);
 
-            makeSetups();
+            await clearSetups();
+            await makeSetups();
         }
 
         children.appendChild(panelButtonReset);
@@ -900,10 +894,22 @@ function setupPanelButtonUpdate(children) {
 async function makeSetups() {
     console.debug("[Hub Watcher]", "Setting up...");
 
-    await setupOverlay();
+    const listener = async () => {
+        await clearSetups();
+        await makeSetups();
+        watchOverlay();
+    };
+    if (navigation) {
+        eventListeners.push({ element: navigation, type: "navigate", listener });
+        navigation.addEventListener("navigate", listener);
+    }
+
+    if (document.getElementById("canvas-wrapper") === null)
+        return;
+
+    setupOverlay();
     await setupPanel();
     setupCoordinates();
-    watchOverlay();
 
     setTimeout(async () => {
         if (dataCanvas === null) {
@@ -919,6 +925,32 @@ async function makeSetups() {
     }, 500);
 
     console.debug("[Hub Watcher]", "Setup complete.");
+}
+
+async function clearSetups() {
+    console.debug("[Hub Watcher]", "Clearing setups...");
+
+    for (const { element, type, listener } of eventListeners) {
+        element.removeEventListener(type, listener);
+    }
+    eventListeners.length = 0;
+
+    for (const observer of observers) {
+        observer.disconnect();
+    }
+    observers.length = 0;
+
+    const panel = document.getElementById("bhw-panel");
+    if (panel !== null) panel.remove();
+
+    const overlay = document.getElementById("bhw-overlay");
+    if (overlay !== null) overlay.remove();
+
+    overlayCanvas = null;
+    dataCanvas = null;
+    dataPalette = null;
+
+    console.debug("[Hub Watcher]", "Setups cleared.");
 }
 
 const searchParams = new URLSearchParams(window.location.search);
@@ -945,7 +977,7 @@ if (searchParams.get("overlay-url") !== null) {
         return;
     }
 
-    GM_setValue("bhw-overlay-url", url);
+    GM_setValue("${STORAGE_PREFIX}", url.href);
 }
 
 if (searchParams.get("overlay-opacity") !== null) {
