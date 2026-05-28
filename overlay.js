@@ -31,6 +31,7 @@
 "use strict";
 
 const DATA_DOMAIN = "https://renobei.github.io";
+const VOLC_DOMAIN = "https://blurple.volcaneau.fr";
 const API_DOMAIN = "https://canvas.projectblurple.com/api/v1";
 
 /**
@@ -690,6 +691,7 @@ function setupPanelUrl(children) {
 
         panelUrl.options.add(new Option("NSPX", `${DATA_DOMAIN}/template.png`));
         panelUrl.options.add(new Option("Bozo Painters", `${DATA_DOMAIN}/bozo.png`));
+        panelUrl.options.add(new Option("Blurple Hub Overlay", `${VOLC_DOMAIN}/overlay/global.png`));
         panelUrl.options.add(new Option("Custom", "custom", true, true));
 
         for (let i = 0; i < panelUrl.options.length; i += 1) if (url.endsWith(panelUrl.options[i].value.replace(DATA_DOMAIN, ""))) panelUrl.selectedIndex = i;
