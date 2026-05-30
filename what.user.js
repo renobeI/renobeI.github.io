@@ -29,6 +29,7 @@
 "use strict";
 
 const DATA_DOMAIN = "https://blurple.volcaneau.fr";
+const DATA_DOMAIN2 = "https://renobei.github.io";
 const API_DOMAIN = "https://canvas.projectblurple.com/api/v1";
 
 /**
@@ -778,12 +779,7 @@ function setupPanelUrl(children) {
 
         panelUrl.options.add(new Option("Global Overlay", `${DATA_DOMAIN}/overlay/global.png`));
         panelUrl.options.add(new Option("Tatsu [#TM]", `${DATA_DOMAIN}/overlay/tatsu.png`));
-        panelUrl.options.add(new Option("r/PokemonUnite", `${DATA_DOMAIN}/overlay/pokemon.png`));
-        panelUrl.options.add(new Option("#FrenchCanvas", `${DATA_DOMAIN}/overlay/fr.png`));
-        panelUrl.options.add(new Option("FishWiki", `${DATA_DOMAIN}/overlay/fish.png`));
-        panelUrl.options.add(new Option("ManePxls", `${DATA_DOMAIN}/overlay/mane.png`));
-        panelUrl.options.add(new Option("./breakthecode_", `${DATA_DOMAIN}/overlay/code.png`));
-        panelUrl.options.add(new Option("NSPX (aka. Swarm)", `${DATA_DOMAIN}/overlay/nspx.png`));
+        panelUrl.options.add(new Option("NSPX", `${DATA_DOMAIN2}/template.png`));
         panelUrl.options.add(new Option("Custom", "custom", true, true));
 
         for (let i = 0; i < panelUrl.options.length; i += 1) if (url.endsWith(panelUrl.options[i].value.replace(DATA_DOMAIN, ""))) panelUrl.selectedIndex = i;
